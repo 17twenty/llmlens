@@ -35,24 +35,7 @@ You also need Google Chrome installed at the default OS path (or pass
 `--chrome=<path>` to override). llmlens drives a Chrome instance via
 CDP — it doesn't ship its own browser.
 
-### Pre-built binaries
-
-Released archives contain `llmlens` + `smoketest` for each
-platform, plus the project documentation. Pick your OS/arch from the
-[latest release](https://github.com/17twenty/llmlens/releases/latest):
-
-| Target | Archive |
-|--------|---------|
-| macOS Apple Silicon | `llmlens_<version>_darwin_arm64.tar.gz` |
-| macOS Intel | `llmlens_<version>_darwin_amd64.tar.gz` |
-| Linux x86_64 | `llmlens_<version>_linux_amd64.tar.gz` |
-| Linux ARM64 | `llmlens_<version>_linux_arm64.tar.gz` |
-| Windows x86_64 | `llmlens_<version>_windows_amd64.zip` |
-
-Verify against `checksums.txt` from the same release. Extract anywhere on
-`$PATH`; both `llmlens` and `smoketest` are self-contained.
-
-### From source
+### From source (current)
 
 Requires Go 1.26+.
 
@@ -71,6 +54,25 @@ Verify the build with the no-auth smokes:
 ```
 
 Both should end in `PASS`.
+
+### Pre-built binaries (from v0.1.0 onwards)
+
+Once the first tag is cut, GitHub Releases will host archives
+containing `llmlens` + `smoketest` for each platform, plus the project
+documentation:
+
+| Target | Archive |
+|--------|---------|
+| macOS Apple Silicon | `llmlens_<version>_darwin_arm64.tar.gz` |
+| macOS Intel | `llmlens_<version>_darwin_amd64.tar.gz` |
+| Linux x86_64 | `llmlens_<version>_linux_amd64.tar.gz` |
+| Linux ARM64 | `llmlens_<version>_linux_arm64.tar.gz` |
+| Windows x86_64 | `llmlens_<version>_windows_amd64.zip` |
+
+Pick from the [latest
+release](https://github.com/17twenty/llmlens/releases/latest), verify
+against `checksums.txt` in the same release, extract anywhere on
+`$PATH`. Both binaries are self-contained.
 
 ## Getting started
 
