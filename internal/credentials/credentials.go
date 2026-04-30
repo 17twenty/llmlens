@@ -7,10 +7,12 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 
 	icdp "llmlens/internal/cdp"
@@ -98,9 +100,32 @@ func originOf(rawURL string) string {
 	return u.Scheme + "://" + u.Host + "/"
 }
 
-// Import installs a Bundle into a freshly-launched browser before any user
-// navigation occurs. Cookies are set via Network.setCookies; per-origin storage
-// is replayed by navigating to each origin and evaluating JS.
+// Import installs cookies eagerly and arms one-shot listeners for per-origin
+// storage replay.
+//
+// Cookies are domain-scoped — Network.SetCookies works without any
+// navigation. localStorage / sessionStorage are origin-scoped; CDP can only
+// write them from a document loaded on that origin, which means a real
+// navigation is required.
+//
+// An earlier version navigated to every captured origin during Import,
+// which loaded 2–3 real sites at browser launch (slow, surprising,
+// detection-shaped — three sequential cold requests with no human-like
+// pacing is a classic bot signature).
+//
+// The lazy approach: cookies eagerly, then a chromedp listener per origin
+// that fires storage replay the first time the agent's main frame
+// navigates to a matching origin. sync.Once guarantees a single replay
+// per origin per Import call.
+//
+// Race window: between EventFrameNavigated and storage injection
+// completing, a CDP command from the agent could observe the page
+// pre-injection. In practice agents do navigate → wait_for(load) →
+// snapshot, giving ~hundreds of ms for the goroutine spawned from the
+// listener to finish — comfortable. If a future site reads localStorage
+// during initial render before our injection lands, we'll need to
+// either pre-stamp via Page.addScriptToEvaluateOnNewDocument or wrap
+// navigate to await pending injections.
 func Import(ctx context.Context, b *icdp.Browser, bundle *Bundle) error {
 	if len(bundle.Cookies) == 0 && len(bundle.Origins) == 0 {
 		return nil
@@ -125,14 +150,38 @@ func Import(ctx context.Context, b *icdp.Browser, bundle *Bundle) error {
 	}
 
 	for origin, store := range bundle.Origins {
-		if err := chromedp.Run(b.Ctx(), chromedp.Navigate(origin)); err != nil {
-			return fmt.Errorf("navigate %s: %w", origin, err)
-		}
-		if err := setStorage(b.Ctx(), store); err != nil {
-			return fmt.Errorf("set storage for %s: %w", origin, err)
-		}
+		armStorageReplay(b.Ctx(), origin, store)
 	}
 	return nil
+}
+
+// armStorageReplay installs a chromedp listener that fires storage
+// replay the first time the agent's main frame navigates to the given
+// origin. Idempotent via sync.Once.
+//
+// Listeners run on chromedp's event-delivery goroutine, which means they
+// must NOT call chromedp.Run synchronously (it'd deadlock waiting for an
+// event the same loop should be delivering). We spawn a goroutine for
+// the actual injection; chromedp.Run inside it works fine.
+func armStorageReplay(ctx context.Context, origin string, store OriginStorage) {
+	var once sync.Once
+	chromedp.ListenTarget(ctx, func(ev any) {
+		e, ok := ev.(*page.EventFrameNavigated)
+		if !ok || e.Frame == nil || e.Frame.ParentID != "" {
+			return
+		}
+		if originOf(e.Frame.URL) != origin {
+			return
+		}
+		once.Do(func() {
+			go func() {
+				// Best-effort: storage replay failure shouldn't crash
+				// the agent flow. The cookies got us here; storage is a
+				// nice-to-have for the typical site.
+				_ = setStorage(ctx, store)
+			}()
+		})
+	})
 }
 
 func dumpOriginStorage(ctx context.Context) (OriginStorage, error) {
