@@ -401,7 +401,11 @@ func (e *Engine) Eval(js string) (raw json.RawMessage, err error) {
 func (e *Engine) WaitFor(condition string, timeout time.Duration) (err error) {
 	defer e.record("wait_for", map[string]any{"condition": condition, "timeout_ms": timeout.Milliseconds()})(&err)
 	if timeout <= 0 {
-		timeout = 10 * time.Second
+		// 15s default. The Gmail compose-send agent run (PRD §6 Pattern C)
+		// burned ~20 polling evals after a 10s wait_for missed Gmail's
+		// modal-open. 15s catches slow modals without making timeout
+		// failures feel sluggish.
+		timeout = 15 * time.Second
 	}
 	b, err := e.EnsureBrowser()
 	if err != nil {

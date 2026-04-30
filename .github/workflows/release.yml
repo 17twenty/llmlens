@@ -1,0 +1,51 @@
+# Release workflow.
+#
+# Triggers on v* tag pushes. Builds darwin/arm64+amd64, linux/arm64+amd64,
+# windows/amd64 binaries via goreleaser; uploads to a GitHub Release named
+# after the tag.
+#
+# Cut a release with:
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# Local dry run (no upload, no tag required):
+#   goreleaser release --snapshot --skip=publish --clean
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so goreleaser can compute changelog from previous tag.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Verify build + vet
+        run: |
+          go build ./...
+          go vet ./...
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

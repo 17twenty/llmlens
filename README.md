@@ -31,17 +31,30 @@ See `PRD.md` for design intent and `smoketests.md` for what's validated.
 
 ## Install
 
-### Pre-built binaries (planned, not yet shipping)
+You also need Google Chrome installed at the default OS path (or pass
+`--chrome=<path>` to override). llmlens drives a Chrome instance via
+CDP — it doesn't ship its own browser.
 
-> **TODO:** GitHub Releases will host signed binaries for
-> `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`, and
-> `windows/amd64`. Install will be a one-line download to a directory
-> on `$PATH`. Until then, build from source — see below.
+### Pre-built binaries
+
+Released archives contain `llmlens` + `smoketest` for each
+platform, plus the project documentation. Pick your OS/arch from the
+[latest release](https://github.com/17twenty/llmlens/releases/latest):
+
+| Target | Archive |
+|--------|---------|
+| macOS Apple Silicon | `llmlens_<version>_darwin_arm64.tar.gz` |
+| macOS Intel | `llmlens_<version>_darwin_amd64.tar.gz` |
+| Linux x86_64 | `llmlens_<version>_linux_amd64.tar.gz` |
+| Linux ARM64 | `llmlens_<version>_linux_arm64.tar.gz` |
+| Windows x86_64 | `llmlens_<version>_windows_amd64.zip` |
+
+Verify against `checksums.txt` from the same release. Extract anywhere on
+`$PATH`; both `llmlens` and `smoketest` are self-contained.
 
 ### From source
 
-Requires Go 1.26+ and Google Chrome installed at the default OS path (or
-pass `--chrome=<path>` to override).
+Requires Go 1.26+.
 
 ```bash
 git clone https://github.com/17twenty/llmlens

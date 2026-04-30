@@ -237,7 +237,7 @@ func toolDescriptors() []toolDescriptor {
 				"or a CSS selector (default — waits for first match to be visible).",
 			InputSchema: objSchema(map[string]any{
 				"condition":  str("Condition string. See description for prefixes."),
-				"timeout_ms": integer("Timeout in milliseconds. Default 10000."),
+				"timeout_ms": integer("Timeout in milliseconds. Default 15000. Bump higher for slow-to-render modals (e.g. Gmail compose, X reply) where the default may miss."),
 			}, "condition"),
 		},
 	}

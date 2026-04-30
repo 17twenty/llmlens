@@ -1,0 +1,112 @@
+# goreleaser config — see https://goreleaser.com
+#
+# Local dry run (no upload, no tag required):
+#   goreleaser release --snapshot --skip=publish --clean
+#
+# Real release (run via GitHub Actions on a v* tag push):
+#   git tag v0.1.0
+#   git push origin v0.1.0
+
+version: 2
+
+project_name: llmlens
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: llmlens
+    main: ./cmd/llmlens
+    binary: llmlens
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # windows/arm64 is uncommon and untested for us; skip until asked
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+  - id: smoketest
+    main: ./cmd/smoketest
+    binary: smoketest
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - id: default
+    # Default goreleaser behaviour: one archive per OS/Arch containing every
+    # binary built for that target — so users get llmlens + smoketest
+    # together in `llmlens_<version>_<os>_<arch>.tar.gz` (or .zip on windows).
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - PRD.md
+      - smoketests.md
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: 17twenty
+    name: llmlens
+  draft: false
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"
+  header: |
+    Pre-built binaries for `llmlens` and the `smoketest` runner.
+
+    Each archive contains both binaries plus the project documentation
+    (README, PRD, smoketests). Verify downloads against `checksums.txt`.
+
+    See `README.md` (Getting started) for the auth-start → MCP-register
+    flow. Smoke scenarios are in `smoketests.md`.
