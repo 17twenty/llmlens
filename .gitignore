@@ -1,0 +1,18 @@
+# build artefacts
+bin/
+*.test
+*.out
+
+# per-run artefacts (HTML, markdown, screenshots, events.log)
+runs/
+
+# credential bundles — contain auth tokens, never commit
+profiles/
+
+# dev profile dirs used by smoketests
+.smokeprofile/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
