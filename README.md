@@ -167,7 +167,7 @@ All tools available in both JSON-RPC and MCP modes.
 | `back`      | Browser history: back.                                      |
 | `forward`   | Browser history: forward.                                   |
 | `reload`    | Reload current page.                                        |
-| `snapshot`  | Capture AXTree-derived element list across every frame (link elements include `href`, sub-frame elements include `frame`); flags `auth_required` if the page is a login wall; optional HTML/markdown.|
+| `snapshot`  | Capture AXTree-derived element list across every frame (link elements include `href`, sub-frame elements include `frame`); flags `auth_required` for login walls and `vision_recommended` when the page is canvas-rendered or AXTree-starved; optional HTML/markdown.|
 | `click`     | Click element by ref from the latest snapshot.              |
 | `type`      | Focus an element, type text, optional Enter to submit.      |
 | `screenshot`| PNG of viewport or full page (returns base64 / MCP image).  |
@@ -258,6 +258,7 @@ in `internal/rpc/mcp.go::toolDescriptors()`.
 
 ```bash
 ./bin/smoketest -scenario=snapshot-shape          # snapshot returns role=link with href
+./bin/smoketest -scenario=maps-shape              # vision_recommended fires on canvas pages
 ./bin/smoketest -scenario=google-discovery        # navigate + snapshot + markdown
 ./bin/smoketest -scenario=google-interactive      # type + wait_for + snapshot
 ./bin/smoketest -scenario=creds-roundtrip      -profile=profiles/linkedin.json
@@ -280,42 +281,97 @@ Agent-driven (manual, real LLM in the loop):
 
 Run prompts and pass criteria are in `smoketests.md`.
 
-## Where things sit
+## Project status
 
-Shipped:
+**Shipped:**
+
 - 10-tool surface (navigate, back, forward, reload, snapshot, click,
   type, screenshot, eval, wait_for) with stable error categories
 - AXTree perception across same-origin sub-frames; link elements
   hydrated with `href`; sub-frame elements tagged with `frame`
+- Snapshot signals for the agent: `auth_required` / `auth_hint` when
+  the page is a login wall; `vision_recommended` / `vision_reason`
+  when the page is canvas-rendered or AXTree-starved (Maps, Sheets,
+  Figma, charts)
 - HTML→markdown render + IE6-style `runs/<id>/<host>/<path>.{html,md}`
   artifact tree + JSONL `events.log` audit
 - `auth-start` flow: open Chrome, watch login, capture cookies +
   per-origin storage; cross-domain federated auth (e.g. Google) handled
 - `--profiles-dir` registry with `fsnotify` hot-reload — drop a bundle
   in, the running MCP server imports it
-- Login-wall detection in snapshot (`auth_required`, `auth_hint`)
 - JSON-RPC and MCP transports sharing one engine; lazy browser launch
   so registering the MCP server is cheap
-- Smoke scenarios green: snapshot-shape, google-discovery,
-  google-interactive, creds-roundtrip (LinkedIn), gmail-triage,
-  gmail-read-message
-- Smoke scenarios spec'd but not yet validated by the user:
-  twitter-triage
-- Agent-driven scenarios validated end-to-end:
-  linkedin-ai-connections, gmail-followups, gmail-compose-send
-- Agent-driven scenarios spec'd but not yet run:
-  twitter-engage
+- Deterministic smokes green: `snapshot-shape`, `google-discovery`,
+  `google-interactive`, `creds-roundtrip` (LinkedIn), `gmail-triage`,
+  `gmail-read-message`, `twitter-triage`, `maps-shape`
+- Agent-driven scenarios validated end-to-end via MCP:
+  `linkedin-ai-connections`, `gmail-followups`, `gmail-compose-send`,
+  `twitter-engage`
 
-Deliberately deferred — see `PRD.md`:
-- Vision escalation gate (Phase 2 — no concrete failure to motivate it)
-- `extract(schema)` (Phase 5 — wait for usage signal)
-- Stealth provider adapter (Phase 4)
-- Browser-extension transport (PRD §3.3 — triggers documented, none
-  yet fired hard enough)
-- Prompt-injection threat model (Phase 4)
-- Multi-tab handling
-- Cross-origin iframe traversal (would require browser-extension
-  transport; same-origin sub-frames work today)
+## Active research areas
+
+Open scope decisions — not missing features. Each entry has a concrete
+*trigger* that would move it into the roadmap. The discipline that
+made the shipped list right is the same discipline that says "don't
+build these yet." See `PRD.md` for the design conversations behind
+each one.
+
+### Triggered when validated
+
+These build the moment a real run produces the trigger condition.
+
+- **`extract(schema)` tool** (PRD §2.3). *Trigger: agents repeatedly
+  hand-write the same extraction pattern across runs.* Across four
+  agent runs we've never seen this — Pattern A (LinkedIn cards) and
+  Pattern B (Gmail row scraping) extract via existing primitives, and
+  PRD §6 documents that eval is the right shape for tabular cases
+  where snapshot's flat element list isn't enough.
+- **Browser-extension transport** (PRD §3.3). Five triggers
+  documented; none yet fired hard. Closest signal: Google session
+  cookies rotate aggressively (~30 min lifetimes) — bundle re-capture
+  is friction but not yet daily-friction-level.
+- **Auto-mode vision escalation.** *Trigger: agent ignores the
+  `vision_recommended` hint repeatedly on pages it should screenshot.*
+  Today the hint is a signal; the agent decides. If we observe it
+  being missed, we'd promote to a "snapshot includes a thumbnail when
+  hint fires" mode.
+- **Multi-tab handling.** *Trigger: a target task that needs more than
+  one tab.* Compose-and-send happens in one tab; LinkedIn + Gmail +
+  X all stay single-tab. None observed.
+- **Cross-origin iframe traversal.** Same-origin works today via CDP.
+  Cross-origin would require either CDP target attachment per frame
+  or the browser-extension transport. *Trigger: a target where
+  critical content lives in a cross-origin iframe.*
+
+### Deployment-shape decisions
+
+These depend on how llmlens gets shipped, not on capability gaps.
+
+- **Stealth provider adapter** (Browserbase / Camoufox / Surfsky).
+  *Trigger: deployment that requires hosted Chrome, residential
+  proxies, or CAPTCHA solving* — i.e. SaaS, scraping at scale, or a
+  target with bot-detection we can't pass with our bundle. For
+  personal-agent use today, local Chrome is fit-for-purpose.
+- **Prompt-injection threat model + `eval` allowlist mode.**
+  *Trigger: shipping shape stabilises (CLI tool? library? hosted
+  service?).* Each deployment posture has a different threat model.
+
+### Out of scope by design
+
+These will not be built. Listed so they don't accumulate as silent
+technical debt.
+
+- **Server-side OCR / image interpretation.** Claude (and any
+  MCP-aware multimodal model) interprets images natively. We surface
+  `screenshot()` and the `vision_recommended` hint; the agent
+  reads pixels in its own context. Building OCR would duplicate
+  upstream and rot.
+- **Auto-attaching screenshots to every snapshot.** Token cost is
+  too high; the Vardanyan paper itself recommends signalling, not
+  auto-attaching.
+- **Confidence scoring on perception elements.** Earlier PRD draft
+  proposed it; couldn't define a meaningful score consumers would
+  use. Dropped.
 
 ## Files of note
 

@@ -186,7 +186,11 @@ func toolDescriptors() []toolDescriptor {
 				"Prefer snapshot over eval for structured-data tasks: it's cheaper, safer, and the " +
 				"AXTree often already exposes what you'd otherwise scrape via querySelectorAll. " +
 				"If auth_required is true on the response, the page is a login wall — stop the task " +
-				"and report auth_hint to the user; do not attempt to bypass.",
+				"and report auth_hint to the user; do not attempt to bypass. " +
+				"If vision_recommended is true, the page contains content the AXTree cannot see " +
+				"(canvas-rendered apps like Google Maps / Sheets / Figma, charts, dense interactive " +
+				"grids). Call screenshot() and use vision to interpret what the structured " +
+				"elements miss. The vision_reason field tells you why the hint fired.",
 			InputSchema: objSchema(map[string]any{
 				"include_html":     boolean("Include raw HTML in the response. Very token-heavy; usually leave false."),
 				"include_markdown": boolean("Include a markdown render of the page. Useful for content extraction."),

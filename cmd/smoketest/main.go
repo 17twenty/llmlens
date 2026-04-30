@@ -19,7 +19,7 @@ import (
 // smoketest runs the LLMLens smoke scenarios end-to-end against a launched
 // (headed by default) Chrome. Exit code 0 = pass, 1 = fail.
 func main() {
-	scenario := flag.String("scenario", "google-discovery", "scenario name: google-discovery | google-interactive | creds-roundtrip | snapshot-shape | gmail-triage | gmail-read-message | twitter-triage")
+	scenario := flag.String("scenario", "google-discovery", "scenario name: google-discovery | google-interactive | creds-roundtrip | snapshot-shape | gmail-triage | gmail-read-message | twitter-triage | maps-shape")
 	headless := flag.Bool("headless", false, "run chrome headless")
 	chromePath := flag.String("chrome", "", "override chrome executable")
 	userDataDir := flag.String("user-data-dir", "", "persistent profile dir (helps avoid consent gates)")
@@ -83,6 +83,8 @@ func main() {
 		runGmailReadMessage(engine)
 	case "twitter-triage":
 		runTwitterTriage(engine)
+	case "maps-shape":
+		runMapsShape(engine)
 	default:
 		fail("unknown scenario %q", *scenario)
 	}
@@ -270,6 +272,41 @@ func runGmailTriage(e *tools.Engine) {
 
 	logf("PASS gmail-triage: authenticated inbox loaded (%d elements, compose visible=%v)",
 		len(snap.Elements), composeFound)
+}
+
+// -- maps-shape: assert vision_recommended fires on canvas-rendered pages
+
+// Google Maps is the canonical canvas-rendered surface — the actual map and
+// its annotations live on a full-viewport <canvas> that the AXTree never
+// exposes. This scenario guards the canvas-detection probe in
+// perception.detectVisionNeed: snapshot must set vision_recommended=true
+// with a reason mentioning canvas. No auth required, fast.
+func runMapsShape(e *tools.Engine) {
+	step("navigate to https://maps.google.com")
+	must(e.Navigate("https://maps.google.com"))
+
+	step("wait for load + map render")
+	if werr := e.WaitFor("load", 15*time.Second); werr != nil {
+		logf("warn: load wait: %v", werr)
+	}
+	time.Sleep(2 * time.Second) // canvas paints after layout settles
+
+	step("snapshot — assert vision_recommended fires")
+	snap, err := e.Snapshot(tools.SnapshotOpts{IncludeMarkdown: false, SaveArtifacts: true})
+	must(err)
+	logf("url=%s elements=%d vision_recommended=%v",
+		snap.URL, len(snap.Elements), snap.VisionRecommended)
+	logf("reason: %q", snap.VisionReason)
+
+	if !snap.VisionRecommended {
+		fail("expected vision_recommended=true on Maps (canvas surface), got false. inspect %s",
+			e.SessionRoot())
+	}
+	if !strings.Contains(strings.ToLower(snap.VisionReason), "canvas") {
+		fail("expected reason to mention canvas, got %q", snap.VisionReason)
+	}
+
+	logf("PASS maps-shape: vision hint fires on canvas-rendered page")
 }
 
 // -- twitter-triage: assert imported bundle yields authenticated x.com/home

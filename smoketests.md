@@ -17,6 +17,7 @@ in an IE6-style host/path tree.
 | ID                    | Purpose                                       | Auth | Default in CI |
 |-----------------------|-----------------------------------------------|------|---------------|
 | `snapshot-shape`      | Guard: snapshot returns role=link with href   | none | yes           |
+| `maps-shape`          | Guard: vision_recommended fires on canvas pgs | none | yes           |
 | `google-discovery`    | Validate navigate / snapshot / markdown       | none | yes           |
 | `google-interactive`  | Validate snapshot / type / wait_for           | none | yes           |
 | `linkedin-attached`   | Validate attached-session + cookies for auth  | yes  | manual        |
@@ -49,6 +50,39 @@ against a stable fixture without auth or real scraping.
 
 If link hydration regresses (e.g. `cdpdom.DescribeNode` returns errors and
 gets silently swallowed), `Href` becomes empty and this fails fast.
+
+## maps-shape
+
+**Purpose.** Regression guard for the canvas-detection probe in
+`internal/perception/snapshot.go::detectVisionNeed`. Google Maps is the
+canonical canvas-rendered surface — the actual map and its annotations
+live on a full-viewport `<canvas>` that the AXTree never exposes. If
+this scenario stops setting `vision_recommended: true`, agents will
+silently lose the ability to recognise canvas pages and reach for
+`screenshot()`.
+
+**Prep.** None. No auth, public URL.
+
+**Run.**
+
+```bash
+./bin/smoketest -scenario=maps-shape
+```
+
+**Pass criteria** (enforced):
+1. Snapshot of `https://maps.google.com` sets
+   `vision_recommended: true`.
+2. `vision_reason` mentions `canvas` or `axtree` (covers both the
+   strong canvas-coverage trigger and the weak AXTree-starvation
+   fallback).
+
+**Failure-mode interpretation:**
+- Hint failed to fire — either the canvas heuristic regressed (DOM
+  query, viewport-coverage maths) or Maps changed its rendering
+  strategy. Inspect saved artifacts; re-tune the threshold.
+- False-positive sibling failures (other smokes start flagging vision
+  on pages that don't need it) — tighten the 20% viewport threshold
+  or filter out tracking canvases.
 
 ## google-discovery
 

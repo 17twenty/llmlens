@@ -30,15 +30,17 @@ type Element struct {
 }
 
 type Snapshot struct {
-	URL          string           `json:"url"`
-	Title        string           `json:"title"`
-	CapturedAt   time.Time        `json:"captured_at"`
-	Elements     []Element        `json:"elements"`
-	Markdown     string           `json:"markdown,omitempty"`
-	HTML         string           `json:"html,omitempty"`
-	AuthRequired bool             `json:"auth_required,omitempty"` // page looks like a login wall
-	AuthHint     string           `json:"auth_hint,omitempty"`     // human-readable next step for the agent
-	RefMap       map[string]int64 `json:"-"`
+	URL               string           `json:"url"`
+	Title             string           `json:"title"`
+	CapturedAt        time.Time        `json:"captured_at"`
+	Elements          []Element        `json:"elements"`
+	Markdown          string           `json:"markdown,omitempty"`
+	HTML              string           `json:"html,omitempty"`
+	AuthRequired      bool             `json:"auth_required,omitempty"`      // page looks like a login wall
+	AuthHint          string           `json:"auth_hint,omitempty"`          // human-readable next step for the agent
+	VisionRecommended bool             `json:"vision_recommended,omitempty"` // AXTree is plausibly missing important content
+	VisionReason      string           `json:"vision_reason,omitempty"`      // why the hint fired
+	RefMap            map[string]int64 `json:"-"`
 }
 
 // roles we surface in the structured element list. anything else is left to markdown.
@@ -126,6 +128,11 @@ func Capture(ctx context.Context, includeHTML, includeMarkdown bool) (*Snapshot,
 
 	detectAuthWall(snap)
 
+	// Vision hint runs after auth detection — they're orthogonal signals.
+	// Best-effort: if the probe fails (CDP timing, evaluation error, etc.)
+	// we just leave the field unset. Snapshot is still useful without it.
+	_ = detectVisionNeed(ctx, snap)
+
 	if includeHTML {
 		snap.HTML = html
 	}
@@ -194,6 +201,56 @@ func collectAXTreesAllFrames(ctx context.Context) ([]frameNode, error) {
 		}
 	}
 	return out, nil
+}
+
+// detectVisionNeed evaluates a small DOM probe and sets VisionRecommended +
+// VisionReason when AXTree-only perception is plausibly insufficient. The
+// classic case is a canvas-rendered app (Maps, Sheets, Figma) where the
+// pixels carry information the AXTree never sees.
+//
+// Trigger: at least one <canvas> element covering >20% of viewport. This is
+// the case the Vardanyan paper names directly (Sheets, Figma, Canva).
+//
+// An earlier draft also fired on "AXTree exposed fewer than 15 elements" as
+// a starvation heuristic, but that produced false positives on healthy-but-
+// minimal pages (example.com has 3 elements and needs nothing). Dropped
+// until we see a real page where rich content goes unsurfaced without
+// canvas — at which point we'd add a body-text-length gate.
+func detectVisionNeed(ctx context.Context, s *Snapshot) error {
+	const probe = `(() => {
+  const canvases = Array.from(document.querySelectorAll('canvas'));
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const viewport = vw * vh;
+  const big = canvases
+    .map(c => {
+      const r = c.getBoundingClientRect();
+      return { area: r.width * r.height };
+    })
+    .filter(x => x.area > 0.2 * viewport);
+  return {
+    canvas_count: canvases.length,
+    big_canvas_count: big.length,
+    biggest_pct: big.length ? Math.round(100 * Math.max.apply(null, big.map(x => x.area)) / viewport) : 0,
+  };
+})()`
+
+	var probeResult struct {
+		CanvasCount    int `json:"canvas_count"`
+		BigCanvasCount int `json:"big_canvas_count"`
+		BiggestPct     int `json:"biggest_pct"`
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(probe, &probeResult)); err != nil {
+		return err
+	}
+
+	if probeResult.BigCanvasCount > 0 {
+		s.VisionRecommended = true
+		s.VisionReason = fmt.Sprintf(
+			"page contains a canvas element covering ~%d%% of the viewport — call screenshot() and use vision to read it",
+			probeResult.BiggestPct,
+		)
+	}
+	return nil
 }
 
 // detectAuthWall flags the snapshot when the page looks like a login flow,
