@@ -9,7 +9,7 @@ Designed around four ideas:
 
 1. **AXTree-first perception.** Snapshots come from the accessibility tree by
    default; HTML/markdown/screenshots are opt-in escalations.
-2. **Sharp tool surface.** Ten tools, no framework cruft. An agent can hold
+2. **Sharp tool surface.** Eleven tools, no framework cruft. An agent can hold
    the whole API in working memory.
 3. **Attached-session auth.** Log in once by hand, capture credentials to a
    portable bundle, hand to the agent.
@@ -180,6 +180,7 @@ All tools available in both JSON-RPC and MCP modes.
 | `back`      | Browser history: back.                                      |
 | `forward`   | Browser history: forward.                                   |
 | `reload`    | Reload current page.                                        |
+| `close_browser` | Shut down Chrome; next tool call lazy-relaunches.        |
 | `snapshot`  | Capture AXTree-derived element list across every frame (link elements include `href`, sub-frame elements include `frame`); flags `auth_required` for login walls and `vision_recommended` when the page is canvas-rendered or AXTree-starved; optional HTML/markdown.|
 | `click`     | Click element by ref from the latest snapshot.              |
 | `type`      | Focus an element, type text, optional Enter to submit.      |
@@ -298,8 +299,10 @@ Run prompts and pass criteria are in `smoketests.md`.
 
 **Shipped:**
 
-- 10-tool surface (navigate, back, forward, reload, snapshot, click,
-  type, screenshot, eval, wait_for) with stable error categories
+- 11-tool surface (navigate, back, forward, reload, close_browser,
+  snapshot, click, type, screenshot, eval, wait_for) with stable
+  error categories and self-healing browser state (stale chromedp
+  context detected and relaunched on the next tool call)
 - AXTree perception across same-origin sub-frames; link elements
   hydrated with `href`; sub-frame elements tagged with `frame`
 - Snapshot signals for the agent: `auth_required` / `auth_hint` when

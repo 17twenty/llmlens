@@ -156,6 +156,8 @@ func (s *Server) handle(method string, params json.RawMessage) (any, error) {
 		return map[string]bool{"ok": true}, s.engine.Forward()
 	case "reload":
 		return map[string]bool{"ok": true}, s.engine.Reload()
+	case "close_browser":
+		return map[string]bool{"closed": true}, s.engine.CloseBrowser()
 
 	case "snapshot":
 		var p tools.SnapshotOpts

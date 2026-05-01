@@ -59,11 +59,23 @@ func New(parent context.Context, opts icdp.Options, onAfterLaunch func(*icdp.Bro
 // Most callers don't need to invoke this directly — every public tool method
 // calls it implicitly. Smoketests / scripted callers may call it explicitly
 // to fail-fast on launch errors.
+//
+// Self-healing: if the cached browser's chromedp context has been cancelled
+// (Chrome process died, websocket closed, unrecoverable CDP error tore the
+// context down), the cached *Browser is discarded and a fresh one is
+// launched. Without this check, a single Chrome death would cause every
+// subsequent tool call to return "context canceled" until the MCP server
+// itself restarted.
 func (e *Engine) EnsureBrowser() (*icdp.Browser, error) {
 	e.bMu.Lock()
 	defer e.bMu.Unlock()
 	if e.browser != nil {
-		return e.browser, nil
+		if e.browser.Ctx().Err() == nil {
+			return e.browser, nil
+		}
+		// Browser context is dead — clean up and fall through to relaunch.
+		e.browser.Close()
+		e.browser = nil
 	}
 	b, err := icdp.New(e.parentCtx, e.browserOpts)
 	if err != nil {
@@ -77,6 +89,16 @@ func (e *Engine) EnsureBrowser() (*icdp.Browser, error) {
 	}
 	e.browser = b
 	return b, nil
+}
+
+// CloseBrowser is the agent-callable shutdown — the underlying close path is
+// the same as the engine-cleanup Close(), but we record it as a tool call
+// in events.log so it shows up in tool-frequency triage. The next tool call
+// that needs a browser will lazy-relaunch via EnsureBrowser.
+func (e *Engine) CloseBrowser() (err error) {
+	defer e.record("close_browser", nil)(&err)
+	e.Close()
+	return nil
 }
 
 // Close shuts down the browser if one was launched. Safe to call when no

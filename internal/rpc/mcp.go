@@ -172,6 +172,18 @@ func toolDescriptors() []toolDescriptor {
 			InputSchema: objSchema(nil),
 		},
 		{
+			Name: "close_browser",
+			Description: "Close the underlying Chrome browser to release resources " +
+				"and reset session state. Subsequent tool calls (navigate, snapshot, " +
+				"etc.) will lazy-relaunch a fresh Chrome with cookies + storage " +
+				"listeners re-imported from the configured profiles directory. " +
+				"Cold start on next call is ~3 seconds. Use when you've finished a " +
+				"task and the browser would otherwise sit idle on a private page " +
+				"(inbox, feed) — or when something feels stuck and you want a clean " +
+				"slate.",
+			InputSchema: objSchema(nil),
+		},
+		{
 			Name: "snapshot",
 			Description: "Capture a structured perception of the current page from the AXTree, " +
 				"traversing every same-origin sub-frame as well — so message bodies, embedded " +

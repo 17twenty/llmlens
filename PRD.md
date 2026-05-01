@@ -22,10 +22,11 @@ LLMLens adopts the "Cellar (CEL)" design philosophy for page perception. We prio
 4.  **Vision Escalation (deferred).** `screenshot()` exists; an automatic *gate* (snapshot heuristic decides "I should also return a PNG") is unbuilt. Per Arxiv 2511.19477 ("Building Browser Agents," Vardanyan), hybrid AXTree + selective vision is the recommended posture; we'll wire the gate when a real failure justifies it. Per-element confidence scores referenced in earlier drafts have been dropped — we couldn't define a meaningful score consumers would use.
 
 ### 2.3 Sharp Tool Surface
-To maintain high agent decision quality and maximize context window efficiency, the harness exposes a minimal set of around ten tools. We follow the "minimal floor" philosophy seen in bash-CDP approaches.
+To maintain high agent decision quality and maximize context window efficiency, the harness exposes a minimal set of around eleven tools. We follow the "minimal floor" philosophy seen in bash-CDP approaches.
 
 *   `navigate(url)`: Direct browser navigation.
 *   `back` / `forward` / `reload`: History controls.
+*   `close_browser`: Shut down Chrome; next tool call lazy-relaunches.
 *   `snapshot()`: Retrieve the current structured perception layer. Elements with `role=link` include `href`, eliminating the need for `eval` on URL-collection tasks.
 *   `click(ref)`: Interact with an element via reference ID.
 *   `type(ref, text)`: Input text into a specific element.
