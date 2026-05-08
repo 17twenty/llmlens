@@ -180,7 +180,7 @@ All tools available in both JSON-RPC and MCP modes.
 | `back`      | Browser history: back.                                      |
 | `forward`   | Browser history: forward.                                   |
 | `reload`    | Reload current page.                                        |
-| `close_browser` | Shut down Chrome; next tool call lazy-relaunches.        |
+| `close_browser` | Tear down Chrome; next tool call lazy-relaunches a clean instance with cookies + listeners re-imported. Use when finished or when something feels stuck. |
 | `snapshot`  | Capture AXTree-derived element list across every frame (link elements include `href`, sub-frame elements include `frame`); flags `auth_required` for login walls and `vision_recommended` when the page is canvas-rendered or AXTree-starved; optional HTML/markdown.|
 | `click`     | Click element by ref from the latest snapshot.              |
 | `type`      | Focus an element, type text, optional Enter to submit.      |
@@ -190,6 +190,14 @@ All tools available in both JSON-RPC and MCP modes.
 
 Refs are produced by `snapshot` (e.g. `e7`) and are valid only against the
 latest snapshot. Re-snapshot before further interaction.
+
+Tool calls are bounded by per-call timeouts: 30s for navigation-shaped
+operations (`navigate`, `back`, `forward`, `reload`), 15s for the rest.
+A genuine hang surfaces as a typed `timeout` error within seconds rather
+than wedging the entire MCP server. `wait_for` retains its own
+caller-supplied `timeout_ms` (default 15s). The engine self-heals from
+dead browser contexts: if Chrome dies, the next tool call drops the
+stale handle and lazy-relaunches transparently.
 
 ## JSON-RPC mode (for scripting and tests)
 
@@ -446,6 +454,29 @@ uses CDP's rich `ExceptionDetails.Error()`). If you still see this,
 check that you're running the latest binary — the MCP server caches
 the binary path at registration; re-running `go build` doesn't restart
 it. Use the troubleshooting kill+relaunch above.
+
+### Live-debugging an MCP run
+
+Set `LLMLENS_DEBUG_LOG` to a file path before launching Claude Code,
+then `tail -f` it from another terminal:
+
+```bash
+export LLMLENS_DEBUG_LOG=/tmp/llmlens.log
+# (re-)launch Claude Code so the MCP server inherits the env var
+
+# In another terminal:
+tail -f /tmp/llmlens.log
+```
+
+The log captures lifecycle (server start, browser launch/close,
+stale-context relaunches), tool calls (entry + exit with duration +
+error category), registry imports + hot-reloads, and watcher events.
+Plain text, one event per line, no rotation — `truncate -s 0
+$LLMLENS_DEBUG_LOG` to clear between runs.
+
+When the env var is unset, debug logging is a no-op. Safe to leave the
+plumbing in place for production users; only those who set the var pay
+the file-write cost.
 
 ## License
 

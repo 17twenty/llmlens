@@ -16,6 +16,7 @@ import (
 	"github.com/chromedp/chromedp"
 
 	icdp "llmlens/internal/cdp"
+	"llmlens/internal/debug"
 	"llmlens/internal/perception"
 	"llmlens/internal/session"
 )
@@ -74,15 +75,20 @@ func (e *Engine) EnsureBrowser() (*icdp.Browser, error) {
 			return e.browser, nil
 		}
 		// Browser context is dead — clean up and fall through to relaunch.
+		debug.Logf("engine", "stale browser ctx detected, relaunching")
 		e.browser.Close()
 		e.browser = nil
 	}
+	debug.Logf("engine", "browser launch starting")
 	b, err := icdp.New(e.parentCtx, e.browserOpts)
 	if err != nil {
+		debug.Logf("engine", "browser launch failed: %v", err)
 		return nil, wrap(err)
 	}
+	debug.Logf("engine", "browser launched")
 	if e.onAfterLaunch != nil {
 		if hookErr := e.onAfterLaunch(b); hookErr != nil {
+			debug.Logf("engine", "after-launch hook failed: %v", hookErr)
 			b.Close()
 			return nil, wrap(hookErr)
 		}
@@ -107,6 +113,9 @@ func (e *Engine) Close() {
 	e.bMu.Lock()
 	defer e.bMu.Unlock()
 	if e.browser != nil {
+		debug.Logf("engine", "browser closing")
+	}
+	if e.browser != nil {
 		e.browser.Close()
 		e.browser = nil
 	}
@@ -130,24 +139,33 @@ func (e *Engine) SessionRoot() string {
 }
 
 // record returns a closer that logs the tool call to events.log on the
-// associated session. Pattern: `defer e.record(tool, params)(&err)` — the
-// pointer is captured at defer time, dereferenced at the deferred call so
-// the final error value is what gets logged.
+// associated session AND to the debug log if active. Pattern:
+// `defer e.record(tool, params)(&err)` — the pointer is captured at defer
+// time, dereferenced at the deferred call so the final error value is
+// what gets logged.
 func (e *Engine) record(tool string, params any) func(*error) {
 	start := time.Now()
+	debug.Logf("tool", "%s start params=%v", tool, truncateParams(params))
 	return func(errp *error) {
-		if e.session == nil {
-			return
-		}
 		var err error
 		if errp != nil {
 			err = *errp
+		}
+		dur := time.Since(start)
+		if err != nil {
+			debug.Logf("tool", "%s done duration=%s err.category=%s err=%s",
+				tool, dur, errorCategory(err), truncate(err.Error(), 200))
+		} else {
+			debug.Logf("tool", "%s done duration=%s ok", tool, dur)
+		}
+		if e.session == nil {
+			return
 		}
 		ev := session.Event{
 			Timestamp:  start.UTC(),
 			Tool:       tool,
 			Params:     truncateParams(params),
-			DurationMS: time.Since(start).Milliseconds(),
+			DurationMS: dur.Milliseconds(),
 		}
 		if err != nil {
 			ev.OK = false
@@ -203,48 +221,84 @@ func truncate(s string, n int) string {
 
 // --- navigate -------------------------------------------------------------
 
+// Per-tool-call timeouts. Without these, a hung Chrome (slow JS, stuck
+// network request, race with another instance) blocks the entire MCP
+// server forever — every subsequent tool call queues behind the wedged
+// chromedp.Run. The agent has no way to recover.
+//
+// Defaults are generous enough to allow real-world latency on slow pages
+// (Gmail search, X timeline, LinkedIn /feed/) but tight enough that a
+// genuine hang surfaces as a typed `timeout` error within seconds, not
+// minutes. Agents that need longer can pass an explicit timeout via
+// wait_for; navigate-shaped operations are always capped here.
+const (
+	defaultNavigateTimeout = 30 * time.Second // navigate, back, forward, reload
+	defaultActionTimeout   = 15 * time.Second // snapshot, click, type, screenshot, eval
+)
+
+// runWithTimeout drives fn against a timeout-derived context. EnsureBrowser
+// is invoked first so callers don't track lifecycle; on context expiry the
+// returned error is a typed *Error with CodeTimeout. Other errors pass
+// through unwrapped — the caller decides whether to wrap them further
+// (e.g. Navigate maps to CodeNavigationFailed).
+func (e *Engine) runWithTimeout(timeout time.Duration, fn func(ctx context.Context) error) error {
+	b, err := e.EnsureBrowser()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(b.Ctx(), timeout)
+	defer cancel()
+	rerr := fn(ctx)
+	if rerr == nil {
+		return nil
+	}
+	if errors.Is(rerr, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
+		return &Error{
+			Code:    CodeTimeout,
+			Message: fmt.Sprintf("tool call exceeded %s timeout", timeout),
+			Cause:   rerr,
+		}
+	}
+	return rerr
+}
+
 func (e *Engine) Navigate(rawURL string) (err error) {
 	defer e.record("navigate", map[string]any{"url": rawURL})(&err)
 	if rawURL == "" {
 		return newErr(CodeInvalidParam, "url required")
 	}
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return err
+	rerr := e.runWithTimeout(defaultNavigateTimeout, func(ctx context.Context) error {
+		return chromedp.Run(ctx, chromedp.Navigate(rawURL))
+	})
+	if rerr == nil {
+		return nil
 	}
-	if rerr := chromedp.Run(b.Ctx(), chromedp.Navigate(rawURL)); rerr != nil {
-		w := wrap(rerr)
-		if w.Code == CodeInternal {
-			w.Code = CodeNavigationFailed
-		}
-		return w
+	w := wrap(rerr)
+	// Re-categorise unknown failures as navigation_failed; preserves
+	// already-typed errors (timeout, ensure-browser failures).
+	if w.Code == CodeInternal {
+		w.Code = CodeNavigationFailed
 	}
-	return nil
+	return w
 }
 
 func (e *Engine) Back() (err error) {
 	defer e.record("back", nil)(&err)
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return err
-	}
-	return wrapNil(chromedp.Run(b.Ctx(), chromedp.NavigateBack()))
+	return wrapNil(e.runWithTimeout(defaultNavigateTimeout, func(ctx context.Context) error {
+		return chromedp.Run(ctx, chromedp.NavigateBack())
+	}))
 }
 func (e *Engine) Forward() (err error) {
 	defer e.record("forward", nil)(&err)
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return err
-	}
-	return wrapNil(chromedp.Run(b.Ctx(), chromedp.NavigateForward()))
+	return wrapNil(e.runWithTimeout(defaultNavigateTimeout, func(ctx context.Context) error {
+		return chromedp.Run(ctx, chromedp.NavigateForward())
+	}))
 }
 func (e *Engine) Reload() (err error) {
 	defer e.record("reload", nil)(&err)
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return err
-	}
-	return wrapNil(chromedp.Run(b.Ctx(), chromedp.Reload()))
+	return wrapNil(e.runWithTimeout(defaultNavigateTimeout, func(ctx context.Context) error {
+		return chromedp.Run(ctx, chromedp.Reload())
+	}))
 }
 
 func wrapNil(err error) error {
@@ -268,16 +322,15 @@ func (e *Engine) Snapshot(opts SnapshotOpts) (snap *perception.Snapshot, err err
 		"include_markdown": opts.IncludeMarkdown,
 		"save_artifacts":   opts.SaveArtifacts,
 	})(&err)
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return nil, err
-	}
 	// markdown requires html
 	includeHTML := opts.IncludeHTML || opts.SaveArtifacts
 	includeMD := opts.IncludeMarkdown || opts.SaveArtifacts
-	snap, err = perception.Capture(b.Ctx(), includeHTML, includeMD)
-	if err != nil {
-		return nil, wrap(err)
+	if rerr := e.runWithTimeout(defaultActionTimeout, func(ctx context.Context) error {
+		var serr error
+		snap, serr = perception.Capture(ctx, includeHTML, includeMD)
+		return serr
+	}); rerr != nil {
+		return nil, wrap(rerr)
 	}
 	e.mu.Lock()
 	e.lastRefMap = snap.RefMap
@@ -312,27 +365,24 @@ func (e *Engine) Click(ref string) (err error) {
 	if err != nil {
 		return err
 	}
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return err
-	}
-	err = chromedp.Run(b.Ctx(), chromedp.ActionFunc(func(ctx context.Context) error {
-		if err := cdpdom.ScrollIntoViewIfNeeded().WithBackendNodeID(bid).Do(ctx); err != nil {
-			return err
-		}
-		box, err := cdpdom.GetBoxModel().WithBackendNodeID(bid).Do(ctx)
-		if err != nil {
-			return err
-		}
-		cx, cy := quadCenter(box.Content)
-		if err := (input.DispatchMouseEvent(input.MousePressed, cx, cy).
-			WithButton(input.Left).WithClickCount(1)).Do(ctx); err != nil {
-			return err
-		}
-		return (input.DispatchMouseEvent(input.MouseReleased, cx, cy).
-			WithButton(input.Left).WithClickCount(1)).Do(ctx)
+	return wrapNil(e.runWithTimeout(defaultActionTimeout, func(ctx context.Context) error {
+		return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			if err := cdpdom.ScrollIntoViewIfNeeded().WithBackendNodeID(bid).Do(ctx); err != nil {
+				return err
+			}
+			box, err := cdpdom.GetBoxModel().WithBackendNodeID(bid).Do(ctx)
+			if err != nil {
+				return err
+			}
+			cx, cy := quadCenter(box.Content)
+			if err := (input.DispatchMouseEvent(input.MousePressed, cx, cy).
+				WithButton(input.Left).WithClickCount(1)).Do(ctx); err != nil {
+				return err
+			}
+			return (input.DispatchMouseEvent(input.MouseReleased, cx, cy).
+				WithButton(input.Left).WithClickCount(1)).Do(ctx)
+		}))
 	}))
-	return wrapNil(err)
 }
 
 func (e *Engine) Type(ref, text string, pressEnter bool) (err error) {
@@ -341,42 +391,37 @@ func (e *Engine) Type(ref, text string, pressEnter bool) (err error) {
 	if err != nil {
 		return err
 	}
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return err
-	}
-	err = chromedp.Run(b.Ctx(), chromedp.ActionFunc(func(ctx context.Context) error {
-		if err := cdpdom.Focus().WithBackendNodeID(bid).Do(ctx); err != nil {
-			return err
-		}
-		if text != "" {
-			if err := input.InsertText(text).Do(ctx); err != nil {
+	return wrapNil(e.runWithTimeout(defaultActionTimeout, func(ctx context.Context) error {
+		return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			if err := cdpdom.Focus().WithBackendNodeID(bid).Do(ctx); err != nil {
 				return err
 			}
-		}
-		if pressEnter {
-			return chromedp.KeyEvent("\r").Do(ctx)
-		}
-		return nil
+			if text != "" {
+				if err := input.InsertText(text).Do(ctx); err != nil {
+					return err
+				}
+			}
+			if pressEnter {
+				return chromedp.KeyEvent("\r").Do(ctx)
+			}
+			return nil
+		}))
 	}))
-	return wrapNil(err)
 }
 
 // --- screenshot -----------------------------------------------------------
 
 func (e *Engine) Screenshot(fullPage bool) (buf []byte, err error) {
 	defer e.record("screenshot", map[string]any{"full_page": fullPage})(&err)
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return nil, err
-	}
 	var action chromedp.Action
 	if fullPage {
 		action = chromedp.FullScreenshot(&buf, 90)
 	} else {
 		action = chromedp.CaptureScreenshot(&buf)
 	}
-	if rerr := chromedp.Run(b.Ctx(), action); rerr != nil {
+	if rerr := e.runWithTimeout(defaultActionTimeout, func(ctx context.Context) error {
+		return chromedp.Run(ctx, action)
+	}); rerr != nil {
 		return nil, wrap(rerr)
 	}
 	return buf, nil
@@ -386,28 +431,25 @@ func (e *Engine) Screenshot(fullPage bool) (buf []byte, err error) {
 
 func (e *Engine) Eval(js string) (raw json.RawMessage, err error) {
 	defer e.record("eval", map[string]any{"js": js})(&err)
-	b, err := e.EnsureBrowser()
-	if err != nil {
-		return nil, err
-	}
-	err = chromedp.Run(b.Ctx(), chromedp.ActionFunc(func(ctx context.Context) error {
-		res, exc, err := runtime.Evaluate(js).WithReturnByValue(true).Do(ctx)
-		if err != nil {
-			return err
-		}
-		if exc != nil {
-			// exc.Error() includes the exception text, line/col, and the
-			// remote object's Description (which carries the stack trace
-			// for thrown Errors). Far more useful than just exc.Text.
-			return newErr(CodeEvalThrew, "%s", exc.Error())
-		}
-		if res != nil {
-			raw = json.RawMessage(res.Value)
-		}
-		return nil
-	}))
-	if err != nil {
-		return nil, wrap(err)
+	if rerr := e.runWithTimeout(defaultActionTimeout, func(ctx context.Context) error {
+		return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			res, exc, err := runtime.Evaluate(js).WithReturnByValue(true).Do(ctx)
+			if err != nil {
+				return err
+			}
+			if exc != nil {
+				// exc.Error() includes the exception text, line/col, and the
+				// remote object's Description (which carries the stack trace
+				// for thrown Errors). Far more useful than just exc.Text.
+				return newErr(CodeEvalThrew, "%s", exc.Error())
+			}
+			if res != nil {
+				raw = json.RawMessage(res.Value)
+			}
+			return nil
+		}))
+	}); rerr != nil {
+		return nil, wrap(rerr)
 	}
 	return raw, nil
 }

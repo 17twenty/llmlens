@@ -11,6 +11,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	icdp "llmlens/internal/cdp"
+	"llmlens/internal/debug"
 )
 
 // Registry is a domain → Bundle map backed by a directory of *.json files.
@@ -81,6 +82,8 @@ func (r *Registry) Apply(ctx context.Context, b *icdp.Browser) error {
 	}
 
 	for _, bd := range bundles {
+		debug.Logf("registry", "applying bundle domain=%s cookies=%d origins=%d",
+			bd.Domain, len(bd.Cookies), len(bd.Origins))
 		if err := Import(ctx, b, bd); err != nil {
 			return fmt.Errorf("import %s: %w", bd.Domain, err)
 		}
@@ -90,7 +93,9 @@ func (r *Registry) Apply(ctx context.Context, b *icdp.Browser) error {
 	for _, bd := range bundles {
 		domains = append(domains, bd.Domain)
 	}
-	r.onLog(fmt.Sprintf("imported %d profile(s): %s", len(bundles), strings.Join(domains, ", ")))
+	msg := fmt.Sprintf("imported %d profile(s): %s", len(bundles), strings.Join(domains, ", "))
+	debug.Logf("registry", "%s", msg)
+	r.onLog(msg)
 	return nil
 }
 
@@ -142,6 +147,7 @@ func (r *Registry) Watch(ctx context.Context, b *icdp.Browser) error {
 }
 
 func (r *Registry) handleFileChange(ctx context.Context, b *icdp.Browser, path string) {
+	debug.Logf("registry", "hot-reload event for %s", filepath.Base(path))
 	bundle, err := LoadBundle(path)
 	if err != nil {
 		// Likely partial write — fsnotify can fire mid-flush. The follow-up
@@ -153,12 +159,15 @@ func (r *Registry) handleFileChange(ctx context.Context, b *icdp.Browser, path s
 		return
 	}
 	if err := Import(ctx, b, bundle); err != nil {
+		debug.Logf("registry", "hot-reload import failed for %s: %v", bundle.Domain, err)
 		r.onLog(fmt.Sprintf("hot-reload warn: applying %s: %v", bundle.Domain, err))
 		return
 	}
 	r.mu.Lock()
 	r.profiles[bundle.Domain] = bundle
 	r.mu.Unlock()
-	r.onLog(fmt.Sprintf("hot-reload: imported %s (%d cookies, %d origin(s) of storage)",
-		bundle.Domain, len(bundle.Cookies), len(bundle.Origins)))
+	msg := fmt.Sprintf("hot-reload: imported %s (%d cookies, %d origin(s) of storage)",
+		bundle.Domain, len(bundle.Cookies), len(bundle.Origins))
+	debug.Logf("registry", "%s", msg)
+	r.onLog(msg)
 }

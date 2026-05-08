@@ -17,3 +17,9 @@ profiles/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code agent state (per-conversation; never check in)
+.claude/
+
+# Sibling project — separate repo, just nested in this dir
+greenthread/

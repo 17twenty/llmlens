@@ -11,6 +11,7 @@ import (
 
 	icdp "llmlens/internal/cdp"
 	"llmlens/internal/credentials"
+	"llmlens/internal/debug"
 	"llmlens/internal/rpc"
 	"llmlens/internal/session"
 	"llmlens/internal/tools"
@@ -61,6 +62,12 @@ func cmdServe(args []string) {
 
 	ctx, cancel := signalContext()
 	defer cancel()
+
+	// Open the debug log if LLMLENS_DEBUG_LOG is set. No-op otherwise.
+	debug.Init()
+	defer debug.Close()
+	debug.Logf("serve", "start mode=%s protocol=%s profiles-dir=%s",
+		*mode, *protocol, *profilesDir)
 
 	opts := icdp.Options{
 		Headless:    *headless,
