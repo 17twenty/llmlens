@@ -254,7 +254,7 @@ func detectVisionNeed(ctx context.Context, s *Snapshot) error {
 }
 
 // detectAuthWall flags the snapshot when the page looks like a login flow,
-// so an agent can stop and ask the user to run `llmlens auth-start --domain=...`
+// so an agent can stop and ask the user to run `llmlens auth-start ...`
 // instead of trying to continue past it.
 //
 // Heuristic: URL matches a login pattern, OR the page contains a password
@@ -291,12 +291,18 @@ func detectAuthWall(s *Snapshot) {
 }
 
 // authHint builds a short, action-oriented note for the agent to relay.
+//
+// The command uses Go-flag syntax (single-dash, space-separated values)
+// because that's what the binary actually accepts, and includes -out
+// because it's a required flag. The MCP server's profiles-dir watcher
+// hot-reloads new bundles on the spot, so no re-registration is needed —
+// the agent's next snapshot will see the auth state cleared.
 func authHint(rawURL string) string {
 	host := hostOf(rawURL)
 	if host == "" {
-		return "This page looks like a login wall. Ask the user to run `llmlens auth-start --domain=<the target domain>` and re-register the MCP server with the new profile."
+		return "This page looks like a login wall. Ask the user to run `llmlens auth-start -domain <target-domain> -out profiles/<name>.json`. The MCP server's watcher will hot-reload the new bundle within seconds."
 	}
-	return "This page looks like a login wall (" + host + "). Ask the user to run `llmlens auth-start --domain=" + host + "` and re-register the MCP server with the new profile."
+	return "This page looks like a login wall (" + host + "). Ask the user to run `llmlens auth-start -domain " + host + " -out profiles/" + host + ".json`. The MCP server's watcher will hot-reload the new bundle within seconds."
 }
 
 func hostOf(rawURL string) string {
