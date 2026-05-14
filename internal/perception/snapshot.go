@@ -297,12 +297,35 @@ func detectAuthWall(s *Snapshot) {
 // because it's a required flag. The MCP server's profiles-dir watcher
 // hot-reloads new bundles on the spot, so no re-registration is needed —
 // the agent's next snapshot will see the auth state cleared.
+//
+// For fingerprint-sensitive hosts (notably Google services), the bundle
+// alone isn't durable — Chrome's per-profile-dir fingerprint matters.
+// In that branch we also tell the user about pairing -user-data-dir
+// between auth-start and serve.
 func authHint(rawURL string) string {
 	host := hostOf(rawURL)
 	if host == "" {
 		return "This page looks like a login wall. Ask the user to run `llmlens auth-start -domain <target-domain> -out profiles/<name>.json`. The MCP server's watcher will hot-reload the new bundle within seconds."
 	}
+	if isFingerprintSensitive(host) {
+		return "This page looks like a login wall (" + host + "). Google fingerprints the browser profile, so cookies alone won't keep the session alive. Ask the user to:\n" +
+			"  1. Run `llmlens auth-start -domain " + host + " -out profiles/" + host + ".json -user-data-dir profiles/.chrome-google`\n" +
+			"  2. Ensure `serve` is launched with the same `-user-data-dir profiles/.chrome-google` so the device fingerprint persists.\n" +
+			"The MCP server's watcher will hot-reload the new bundle within seconds."
+	}
 	return "This page looks like a login wall (" + host + "). Ask the user to run `llmlens auth-start -domain " + host + " -out profiles/" + host + ".json`. The MCP server's watcher will hot-reload the new bundle within seconds."
+}
+
+// isFingerprintSensitive returns true for hosts where session durability
+// depends on Chrome's per-profile-dir device fingerprint, not just cookies.
+// Google services are the canonical case observed in our runs (~30min
+// session lifetime with ephemeral profile dirs vs effectively-permanent
+// with a persistent one).
+func isFingerprintSensitive(host string) bool {
+	h := strings.ToLower(host)
+	return strings.Contains(h, "google.com") ||
+		strings.Contains(h, "googleusercontent.com") ||
+		strings.Contains(h, "googleapis.com")
 }
 
 func hostOf(rawURL string) string {

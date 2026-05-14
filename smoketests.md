@@ -257,22 +257,33 @@ Most users should prefer `auth-start`.
 authenticated inbox in a fresh launched browser. The deterministic
 prerequisite for the agent-driven `gmail-followups` scenario below.
 
-**Prep.**
+**Prep.** Use a *persistent* `-user-data-dir` so Chrome's device
+fingerprint survives into `serve`. Without this, the bundle has a
+~30-minute useful lifetime (Google rotates session cookies aggressively
+when it can't match the profile fingerprint).
 
 ```bash
-./bin/llmlens auth-start -domain=mail.google.com -out=profiles/gmail.json
+./bin/llmlens auth-start \
+  -domain=mail.google.com \
+  -out=profiles/gmail.json \
+  -user-data-dir=profiles/.chrome-google
 ```
 
 A Chrome window opens; sign in to your Google account. If a passkey or
-"verify it's you" challenge appears, complete it in the window. The
-ephemeral profile may be flagged as a "new device"; that's the whole
-point of testing here.
+"verify it's you" challenge appears, complete it in the window. With the
+persistent profile dir, those challenges typically appear once and the
+result sticks across future sessions.
 
-**Run.**
+**Run.** Match the `-user-data-dir` on the smoketest binary too:
 
 ```bash
-./bin/smoketest -scenario=gmail-triage -profile=profiles/gmail.json
+./bin/smoketest -scenario=gmail-triage \
+  -profile=profiles/gmail.json \
+  -user-data-dir=profiles/.chrome-google
 ```
+
+(For non-Google sites, `-user-data-dir` is optional — ephemeral default
+works fine. It's the Google-specific fingerprint dance that needs it.)
 
 **Pass criteria** (enforced):
 1. Snapshot does not flag `auth_required: true`.

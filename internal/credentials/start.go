@@ -27,6 +27,16 @@ type StartOptions struct {
 	// KeepOpen leaves the browser running after capture. Default false.
 	KeepOpen bool
 
+	// UserDataDir, when non-empty, is used as Chrome's persistent profile
+	// directory for the auth-start session — replacing the default ephemeral
+	// tmpdir. Caller is responsible for the dir's lifecycle (we never delete
+	// it). Critical for services with strict device-fingerprint checks
+	// (notably Gmail): if `serve` later launches Chrome with the SAME
+	// UserDataDir, the device fingerprint persists across sessions and the
+	// service treats the MCP-driven browser as a returning trusted device
+	// instead of demanding a fresh password challenge.
+	UserDataDir string
+
 	// OnLog receives progress messages — wire to stderr from a CLI.
 	OnLog func(string)
 }
@@ -53,14 +63,28 @@ func Start(ctx context.Context, opts StartOptions) (*Bundle, error) {
 		opts.OnLog = func(string) {}
 	}
 
-	tmpDir, err := os.MkdirTemp("", "llmlens-authstart-*")
-	if err != nil {
-		return nil, fmt.Errorf("auth start: temp profile dir: %w", err)
+	// Persistent user-data-dir (recommended for Gmail / Google services):
+	// reuse the same dir on `serve` to preserve Chrome's device fingerprint.
+	// Otherwise fall back to an ephemeral tmpdir that we clean up on exit.
+	profileDir := opts.UserDataDir
+	persistent := profileDir != ""
+	if !persistent {
+		tmp, err := os.MkdirTemp("", "llmlens-authstart-*")
+		if err != nil {
+			return nil, fmt.Errorf("auth start: temp profile dir: %w", err)
+		}
+		profileDir = tmp
+		if !opts.KeepOpen {
+			defer os.RemoveAll(tmp)
+		}
+		opts.OnLog(fmt.Sprintf("ephemeral profile dir: %s", tmp))
+		opts.OnLog("(tip: pass -user-data-dir <dir> and use the same dir on `serve` to keep Chrome's device fingerprint — required for Gmail / strict Google services)")
+	} else {
+		if err := os.MkdirAll(profileDir, 0o755); err != nil {
+			return nil, fmt.Errorf("auth start: create user-data-dir: %w", err)
+		}
+		opts.OnLog(fmt.Sprintf("persistent profile dir: %s (will not be deleted)", profileDir))
 	}
-	if !opts.KeepOpen {
-		defer os.RemoveAll(tmpDir)
-	}
-	opts.OnLog(fmt.Sprintf("ephemeral profile dir: %s", tmpDir))
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
@@ -68,7 +92,7 @@ func Start(ctx context.Context, opts StartOptions) (*Bundle, error) {
 	b, err := icdp.New(timeoutCtx, icdp.Options{
 		Mode:        icdp.ModeLaunch,
 		Headless:    false,
-		UserDataDir: tmpDir,
+		UserDataDir: profileDir,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("auth start: launch chrome: %w", err)

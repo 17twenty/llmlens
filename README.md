@@ -110,6 +110,57 @@ For Gmail specifically, also run `gmail-triage`:
 ./bin/smoketest -scenario=gmail-triage -profile=profiles/gmail.json
 ```
 
+> **If you're capturing Gmail or other Google services, read the next
+> section first.** Google fingerprints the browser profile aggressively
+> and an ephemeral capture has a ~30-minute useful lifetime. The
+> persistent-profile pairing below gets you weeks instead.
+
+### 2½. Persistent device fingerprint (Gmail / Google services)
+
+Some services — Google's the canonical case — bind the session to
+Chrome's per-profile-dir fingerprint, not just cookies. With the default
+ephemeral profile dir, `auth-start` captures cookies that work for
+~30 minutes before Google rotates them ("looks like a new device").
+
+The fix is to use the *same* persistent profile directory for both
+`auth-start` and `serve`. Then Chrome's fingerprint persists across
+both, and Google treats every subsequent serve-launched browser as a
+returning trusted device.
+
+```bash
+# Capture with a persistent profile dir (path is arbitrary; keep it
+# out of profiles/<bundle>.json land — profiles/.chrome-google is fine):
+./bin/llmlens auth-start \
+  -domain=mail.google.com \
+  -out=profiles/gmail.json \
+  -user-data-dir=profiles/.chrome-google
+
+# Then make sure your `serve` invocation uses the SAME -user-data-dir.
+# Update ~/.claude.json or .claude/settings.json:
+```
+
+```json
+{
+  "mcpServers": {
+    "llmlens": {
+      "command": "/absolute/path/to/llmlens/bin/llmlens",
+      "args": [
+        "serve",
+        "--protocol=mcp",
+        "--profiles-dir=/absolute/path/to/llmlens/profiles",
+        "--user-data-dir=/absolute/path/to/llmlens/profiles/.chrome-google"
+      ]
+    }
+  }
+}
+```
+
+The `profiles/.chrome-google` directory is gitignored under `profiles/`
+and holds Chrome's internal state — cookies, IndexedDB, service
+workers, **device fingerprint**. Don't share it; treat it like a
+credential. For non-Google sites that don't fingerprint aggressively
+(LinkedIn, X), the default ephemeral dir is fine.
+
 ### 3. Register the MCP server
 
 One MCP entry covers every credential bundle in `profiles/`. Add this to

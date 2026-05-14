@@ -173,14 +173,21 @@ func toolDescriptors() []toolDescriptor {
 		},
 		{
 			Name: "close_browser",
-			Description: "Close the underlying Chrome browser to release resources " +
-				"and reset session state. Subsequent tool calls (navigate, snapshot, " +
-				"etc.) will lazy-relaunch a fresh Chrome with cookies + storage " +
-				"listeners re-imported from the configured profiles directory. " +
-				"Cold start on next call is ~3 seconds. Use when you've finished a " +
-				"task and the browser would otherwise sit idle on a private page " +
-				"(inbox, feed) — or when something feels stuck and you want a clean " +
-				"slate.",
+			Description: "Tear down the underlying Chrome browser. Subsequent tool calls " +
+				"lazy-relaunch a fresh Chrome. SURVIVES the close: cookies and per-origin " +
+				"storage replay (re-imported from the profiles directory on every launch). " +
+				"DIES with the close: Chrome's per-profile state — device fingerprint, " +
+				"IndexedDB, service workers, in-memory tabs. " +
+				"This is a recovery tool (\"the browser feels stuck, give me a clean slate\"), " +
+				"not routine cleanup between navigations. Calling it between every task adds " +
+				"~3s cold-start latency and, for fingerprint-sensitive services like Gmail, " +
+				"causes the new browser instance to be flagged as a 'new device' requiring " +
+				"re-auth — the server logged you out by closing the browser, even though " +
+				"the cookies came back. " +
+				"For sites where this matters, the server should be launched with " +
+				"`serve -user-data-dir <persistent-path>` matching the same path used for " +
+				"`auth-start -user-data-dir`. With a persistent user-data-dir, close_browser " +
+				"is safe — fingerprint persists across relaunches.",
 			InputSchema: objSchema(nil),
 		},
 		{

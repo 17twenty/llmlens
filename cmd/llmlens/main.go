@@ -141,6 +141,7 @@ func cmdAuthStart(args []string) {
 	settle := fs.Duration("settle", 3*time.Second, "URL must stay off /login* for this duration before capture")
 	timeout := fs.Duration("timeout", 5*time.Minute, "give up if no login completes in this window")
 	keepOpen := fs.Bool("keep-open", false, "leave the browser open after capture")
+	userDataDir := fs.String("user-data-dir", "", "persistent Chrome profile dir to use. Use the same dir on `serve` to preserve device fingerprint across sessions — required for Gmail / strict Google services. Empty = ephemeral tmpdir (cleaned up on exit).")
 	_ = fs.Parse(args)
 
 	if *domain == "" || *out == "" {
@@ -153,10 +154,11 @@ func cmdAuthStart(args []string) {
 
 	fmt.Fprintf(os.Stderr, "→ A Chrome window will open. Log in to %s; capture fires once you reach a stable, non-login URL.\n", *domain)
 	bundle, err := credentials.Start(ctx, credentials.StartOptions{
-		Domain:     *domain,
-		SettleTime: *settle,
-		Timeout:    *timeout,
-		KeepOpen:   *keepOpen,
+		Domain:      *domain,
+		SettleTime:  *settle,
+		Timeout:     *timeout,
+		KeepOpen:    *keepOpen,
+		UserDataDir: *userDataDir,
 		OnLog: func(msg string) {
 			fmt.Fprintf(os.Stderr, "  %s\n", msg)
 		},
